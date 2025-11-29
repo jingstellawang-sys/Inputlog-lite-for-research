@@ -1,0 +1,5 @@
+{
+  "name": "Inputlog Lite Web",
+  "description": "A web-based writing process logger for students. Records keystrokes, pauses, and edits locally for analysis, featuring Gemini-powered process feedback.",
+  "requestFramePermissions": []
+}
