@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Square, Clock, User, Activity, Upload, RefreshCw } from 'lucide-react';
+import { Play, Pause, Square, Clock, User, Activity, Upload, RefreshCw, Archive } from 'lucide-react';
 import { useWritingRecorder } from '../hooks/useWritingRecorder';
 import { SessionStatus, WritingSession } from '../types';
 
@@ -23,7 +23,8 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
     setStudentName,
     eventCount,
     checkSavedSession,
-    restoreSession
+    restoreSession,
+    downloadRawBackup
   } = useWritingRecorder();
 
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -201,13 +202,22 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
             </button>
 
             {hasSavedSession && (
-              <button
-                onClick={handleRestore}
-                className="w-full bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
-              >
-                <RefreshCw size={20} />
-                Restore Unsaved Session
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleRestore}
+                  className="flex-1 bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  <RefreshCw size={20} />
+                  Restore Session
+                </button>
+                <button
+                  onClick={downloadRawBackup}
+                  title="Download Backup File"
+                  className="px-4 bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200 rounded-lg transition-colors flex items-center justify-center"
+                >
+                  <Archive size={20} />
+                </button>
+              </div>
             )}
           </div>
 

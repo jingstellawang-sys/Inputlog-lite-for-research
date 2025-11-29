@@ -50,8 +50,8 @@ export const useWritingRecorder = () => {
       const saved = localStorage.getItem(AUTOSAVE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Only restore if it's recent (e.g., within 24 hours) to avoid stale data confusion
-        if (Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000) {
+        // Only restore if it's recent (e.g., within 48 hours)
+        if (Date.now() - parsed.timestamp < 48 * 60 * 60 * 1000) {
           return parsed;
         }
       }
@@ -74,12 +74,38 @@ export const useWritingRecorder = () => {
     }
   };
 
+  const downloadRawBackup = () => {
+     const saved = checkSavedSession();
+     if(saved) {
+        const backupSession: WritingSession = {
+            id: 'BACKUP-' + Date.now(),
+            studentName: saved.studentName || 'Unknown',
+            startTime: saved.startTime,
+            endTime: Date.now(),
+            events: saved.events,
+            finalText: saved.text,
+            totalActiveTime: Date.now() - saved.startTime,
+            totalPauseTime: 0
+        };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupSession, null, 2));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", `BACKUP_RECOVERY_${saved.studentName || 'student'}.json`);
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+     }
+  };
+
   const clearSavedSession = () => {
     localStorage.removeItem(AUTOSAVE_KEY);
   };
   // -----------------------
 
   const startSession = (name: string) => {
+    // CRITICAL: Only clear the old save when we explicitly start a NEW session
+    clearSavedSession(); 
+    
     setStudentName(name);
     setText('');
     eventsRef.current = [];
@@ -114,6 +140,9 @@ export const useWritingRecorder = () => {
     const endTime = Date.now();
     setStatus(SessionStatus.FINISHED);
 
+    // Force one last save before finishing, just in case
+    saveToStorage();
+
     const session: WritingSession = {
       id: uuidv4(),
       studentName,
@@ -126,7 +155,8 @@ export const useWritingRecorder = () => {
     };
 
     sessionRef.current = session;
-    clearSavedSession(); // Clean up storage on successful finish
+    // REMOVED: clearSavedSession(); -> Do NOT clear this here. 
+    // We keep it until the user successfully starts a NEW session.
     return session;
   };
 
@@ -192,6 +222,7 @@ export const useWritingRecorder = () => {
     handleBlur,
     eventCount: eventsRef.current.length,
     checkSavedSession,
-    restoreSession
+    restoreSession,
+    downloadRawBackup
   };
 };

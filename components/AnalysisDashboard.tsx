@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { WritingSession, LogEvent } from '../types';
 import { ArrowLeft, Download, BrainCircuit, Loader2, FileText, Activity, PlayCircle, BarChart2, ChevronDown, ChevronUp, Clock, Eraser, PenLine, MoveRight, ArrowRight } from 'lucide-react';
 import { analyzeWritingSession } from '../services/geminiService';
@@ -23,8 +23,8 @@ interface DeletionGroup {
   id: string;
   type: 'Typo' | 'Revision';
   content: string;
-  replacement?: string; // Text typed immediately after deletion
-  count: number; // Number of raw events
+  replacement?: string; 
+  count: number; 
   time: number;
   position: number;
 }
@@ -33,20 +33,12 @@ interface InsertionGroup {
   id: string;
   content: string;
   time: number;
-  count: number; // keystrokes
+  count: number; 
   level: 'Sentence' | 'Paragraph';
 }
 
-export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, onBack }) => {
-  const [analysis, setAnalysis] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'stats' | 'replay'>('stats');
-  const [showPauseList, setShowPauseList] = useState(false);
-  const [showDeletionList, setShowDeletionList] = useState(false);
-  const [showInsertionList, setShowInsertionList] = useState(false);
-
-  // Advanced Process Analysis (Pauses & Deletions & Insertions)
-  const processAnalysis = useMemo(() => {
+// Separate logic function to be used asynchronously
+const calculateMetrics = (session: WritingSession) => {
     const pauses: PauseInfo[] = [];
     const deletionGroups: DeletionGroup[] = [];
     const insertionGroups: InsertionGroup[] = [];
@@ -56,19 +48,16 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
     // Buffers
     let deletionBuffer: LogEvent[] = [];
     let insertionBuffer: LogEvent[] = [];
-    let replacementBuffer: LogEvent[] = []; // To track text typed immediately after a delete
+    let replacementBuffer: LogEvent[] = []; 
 
-    // State to link delete -> insert (Replacement)
     let lastDeletionGroup: DeletionGroup | null = null;
     let isTrackingReplacement = false;
 
     // --- Helpers ---
-
     const flushReplacement = () => {
       if (lastDeletionGroup && replacementBuffer.length > 0) {
         lastDeletionGroup.replacement = replacementBuffer.map(e => e.content).join('');
       }
-      // Reset replacement tracking
       lastDeletionGroup = null;
       isTrackingReplacement = false;
       replacementBuffer = [];
@@ -94,7 +83,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
       };
 
       deletionGroups.push(newGroup);
-      lastDeletionGroup = newGroup; // Mark this group as potentially having a replacement
+      lastDeletionGroup = newGroup; 
       deletionBuffer = [];
     };
 
@@ -119,9 +108,20 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
       insertionBuffer = [];
     };
 
-    // --- Main Loop ---
+    // Helper for sequential check
+    const isSequential = (buffer: LogEvent[], current: LogEvent) => {
+      if (buffer.length === 0) return true;
+      const last = buffer[buffer.length - 1];
+      
+      if (current.type === 'delete') {
+          return (current.timestamp - last.timestamp < 2000);
+      }
+      const lastLen = last.content?.length || 1;
+      return (current.position === last.position + lastLen);
+    };
 
-    session.events.forEach((event, index) => {
+    // --- Main Loop ---
+    session.events.forEach((event) => {
       // 1. Analyze Pauses
       if (event.pauseBefore > 2000) { 
         const lastFewChars = currentText.slice(-20).replace(/\n/g, '↵');
@@ -146,7 +146,6 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
       if (event.type === 'insert' || event.type === 'paste') {
         flushDeletions(); 
 
-        // Check for Replacement Logic
         const isReplacementStart = lastDeletionGroup && event.position === lastDeletionGroup.position && (event.timestamp - (lastDeletionGroup.time + lastDeletionGroup.count * 100) < 5000); 
         
         if (isReplacementStart || (isTrackingReplacement && isSequential(replacementBuffer, event))) {
@@ -166,11 +165,10 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                 insertionBuffer.push(event);
               }
            } else {
-             flushInsertions(); // Stop tracking non-linear group if we are back to end
+             flushInsertions(); 
            }
         }
 
-        // Update Text
         const left = currentText.slice(0, event.position);
         const right = currentText.slice(event.position);
         currentText = left + (event.content || '') + right;
@@ -187,14 +185,12 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
           deletionBuffer.push(event);
         }
 
-        // Update Text
         const deleteLen = event.content ? event.content.length : 1;
         const left = currentText.slice(0, event.position);
         const right = currentText.slice(event.position + deleteLen);
         currentText = left + right;
 
       } else {
-        // Focus/Blur/Nav
         flushDeletions();
         flushInsertions();
         flushReplacement();
@@ -214,62 +210,93 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
     });
 
     return { pauses, deletionGroups, insertionGroups: refinedInsertions };
-  }, [session.events]);
+}
 
-  // Helper for sequential check
-  const isSequential = (buffer: LogEvent[], current: LogEvent) => {
-    if (buffer.length === 0) return true; // Start of new buffer
-    const last = buffer[buffer.length - 1];
-    
-    // For delete: timestamps close
-    if (current.type === 'delete') {
-        return (current.timestamp - last.timestamp < 2000);
-    }
-    // For insert: positions consecutive
-    const lastLen = last.content?.length || 1;
-    return (current.position === last.position + lastLen);
-  };
+export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, onBack }) => {
+  const [analysis, setAnalysis] = useState<string | null>(null);
+  const [loadingAI, setLoadingAI] = useState(false);
+  const [calculating, setCalculating] = useState(true);
+  const [activeTab, setActiveTab] = useState<'stats' | 'replay'>('stats');
+  const [showPauseList, setShowPauseList] = useState(false);
+  const [showDeletionList, setShowDeletionList] = useState(false);
+  const [showInsertionList, setShowInsertionList] = useState(false);
+  
+  const [processData, setProcessData] = useState<{
+      pauses: PauseInfo[];
+      deletionGroups: DeletionGroup[];
+      insertionGroups: InsertionGroup[];
+  }>({ pauses: [], deletionGroups: [], insertionGroups: [] });
 
-  // Chart Data
+  // Async Calculation Effect to prevent UI Freezing
+  useEffect(() => {
+    setCalculating(true);
+    // Use setTimeout to push this to the next tick, allowing UI to render "Computing" state first
+    const timer = setTimeout(() => {
+        try {
+            const data = calculateMetrics(session);
+            setProcessData(data);
+            setCalculating(false);
+        } catch (e) {
+            console.error("Calculation error", e);
+            setCalculating(false);
+        }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [session]);
+
   const timeData = useMemo(() => {
+    if (calculating) return [];
+    
+    // To avoid heavy loop, we can simplify this for very large sessions
     const buckets: { time: number; chars: number }[] = [];
     const duration = session.endTime! - session.startTime;
-    const bucketCount = 40; 
+    const bucketCount = 50; 
     const bucketSize = duration / bucketCount;
+
+    // Use a simpler sampling method if events > 10000
+    const sampleRate = session.events.length > 10000 ? 5 : 1; 
 
     for (let i = 0; i <= bucketCount; i++) {
       const timeThreshold = i * bucketSize;
-      // Note: For 40 minute sessions, this filter can be heavy if running 40 times on 20k events.
-      // But for <100k events it's usually acceptable on modern JS engines.
-      const eventsUpToNow = session.events.filter(e => e.relativeTime <= timeThreshold);
-      const insertCount = eventsUpToNow.filter(e => e.type === 'insert' || e.type === 'paste').length;
-      const deleteCount = eventsUpToNow.filter(e => e.type === 'delete').length;
+      
+      // Optimization: Don't filter the whole array every time.
+      // Since events are sorted by time, we could just iterate once, but filter is O(N) * 50 buckets = acceptable usually.
+      // For safety, let's keep it simple but guard against massive arrays.
+      let netChars = 0;
+      for(let j=0; j<session.events.length; j+=sampleRate) {
+          const e = session.events[j];
+          if(e.relativeTime > timeThreshold) break;
+          if(e.type === 'insert' || e.type === 'paste') netChars++;
+          if(e.type === 'delete') netChars--;
+      }
       
       buckets.push({
         time: Math.round(timeThreshold / 1000),
-        chars: Math.max(0, insertCount - deleteCount)
+        chars: Math.max(0, netChars)
       });
     }
     return buckets;
-  }, [session]);
+  }, [session, calculating]);
 
   const stats = useMemo(() => {
+     if (calculating) return { words: 0, wpm: 0, typos: 0, revisions: 0, insertions: 0 };
+     
      const words = session.finalText.trim().split(/\s+/).length;
      const durationSec = (session.endTime! - session.startTime) / 1000;
      const wpm = durationSec > 0 ? Math.round((words / durationSec) * 60) : 0;
      
-     const typos = processAnalysis.deletionGroups.filter(d => d.type === 'Typo').length;
-     const revisions = processAnalysis.deletionGroups.filter(d => d.type === 'Revision').length;
-     const insertions = processAnalysis.insertionGroups.length;
+     const typos = processData.deletionGroups.filter(d => d.type === 'Typo').length;
+     const revisions = processData.deletionGroups.filter(d => d.type === 'Revision').length;
+     const insertions = processData.insertionGroups.length;
 
      return { words, wpm, typos, revisions, insertions };
-  }, [session, processAnalysis]);
+  }, [session, processData, calculating]);
 
   const handleAIAnalysis = async () => {
-    setLoading(true);
+    setLoadingAI(true);
     const result = await analyzeWritingSession(session);
     setAnalysis(result);
-    setLoading(false);
+    setLoadingAI(false);
   };
 
   const handleDownload = () => {
@@ -288,6 +315,17 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
     const s = totalSeconds % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
+
+  if (calculating) {
+      return (
+          <div className="h-full flex flex-col items-center justify-center bg-slate-50">
+              <Loader2 className="animate-spin text-indigo-600 mb-4" size={48} />
+              <h2 className="text-xl font-bold text-slate-800">Processing Session Data...</h2>
+              <p className="text-slate-500">Calculating pauses, revisions, and flow.</p>
+              <p className="text-xs text-slate-400 mt-2">({session.events.length} events)</p>
+          </div>
+      );
+  }
 
   return (
     <div className="h-full overflow-y-auto bg-slate-50 p-6 md:p-10">
@@ -360,7 +398,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                 <div className="flex items-center gap-2 text-amber-600 mb-2">
                   <Clock size={20} /> <span className="text-[10px] font-bold uppercase tracking-wider">Pauses (&gt;2s)</span>
                 </div>
-                <div className="text-2xl font-bold text-slate-900">{processAnalysis.pauses.length}</div>
+                <div className="text-2xl font-bold text-slate-900">{processData.pauses.length}</div>
               </div>
                <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
                 <div className="flex items-center gap-2 text-rose-600 mb-2">
@@ -410,7 +448,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                          </tr>
                        </thead>
                        <tbody className="divide-y divide-slate-100">
-                         {processAnalysis.pauses.slice(0, 100).map((pause) => (
+                         {processData.pauses.slice(0, 100).map((pause) => (
                            <tr key={pause.id} className="group hover:bg-slate-50">
                              <td className="py-3 text-slate-500 font-mono text-xs">{formatTime(pause.startTime)}</td>
                              <td className="py-3 font-semibold text-slate-700">{(pause.duration / 1000).toFixed(1)}s</td>
@@ -428,10 +466,10 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                              </td>
                            </tr>
                          ))}
-                         {processAnalysis.pauses.length > 100 && (
-                            <tr><td colSpan={4} className="py-2 text-center text-slate-400 italic">Showing first 100 of {processAnalysis.pauses.length} pauses...</td></tr>
+                         {processData.pauses.length > 100 && (
+                            <tr><td colSpan={4} className="py-2 text-center text-slate-400 italic">Showing first 100 of {processData.pauses.length} pauses...</td></tr>
                          )}
-                         {processAnalysis.pauses.length === 0 && (
+                         {processData.pauses.length === 0 && (
                             <tr><td colSpan={4} className="py-4 text-center text-slate-400">No significant pauses detected.</td></tr>
                          )}
                        </tbody>
@@ -461,7 +499,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                  {showDeletionList && (
                    <div className="px-6 pb-6 max-h-80 overflow-y-auto custom-scrollbar">
                      <div className="space-y-3">
-                       {processAnalysis.deletionGroups.slice(0, 100).map((del) => (
+                       {processData.deletionGroups.slice(0, 100).map((del) => (
                          <div key={del.id} className="p-3 rounded-lg border border-slate-100 hover:border-slate-200 transition-colors">
                            <div className="flex items-start justify-between mb-2">
                               <div className="flex items-center gap-3">
@@ -501,10 +539,10 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                            </div>
                          </div>
                        ))}
-                       {processAnalysis.deletionGroups.length > 100 && (
-                          <div className="text-center text-slate-400 py-2 italic">Showing first 100 of {processAnalysis.deletionGroups.length} deletions...</div>
+                       {processData.deletionGroups.length > 100 && (
+                          <div className="text-center text-slate-400 py-2 italic">Showing first 100 of {processData.deletionGroups.length} deletions...</div>
                        )}
-                       {processAnalysis.deletionGroups.length === 0 && (
+                       {processData.deletionGroups.length === 0 && (
                          <div className="text-center text-slate-400 py-4">No deletions recorded.</div>
                        )}
                      </div>
@@ -533,7 +571,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                  {showInsertionList && (
                    <div className="px-6 pb-6 max-h-60 overflow-y-auto custom-scrollbar">
                       <div className="space-y-2">
-                        {processAnalysis.insertionGroups.slice(0, 100).map((ins) => (
+                        {processData.insertionGroups.slice(0, 100).map((ins) => (
                           <div key={ins.id} className="flex items-center justify-between p-3 bg-slate-50 rounded border border-slate-100">
                             <div className="flex items-center gap-4">
                               <span className="text-xs font-mono text-slate-500 w-12">{formatTime(ins.time)}</span>
@@ -556,10 +594,10 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                             </span>
                           </div>
                         ))}
-                        {processAnalysis.insertionGroups.length > 100 && (
-                          <div className="text-center text-slate-400 py-2 italic">Showing first 100 of {processAnalysis.insertionGroups.length} insertions...</div>
+                        {processData.insertionGroups.length > 100 && (
+                          <div className="text-center text-slate-400 py-2 italic">Showing first 100 of {processData.insertionGroups.length} insertions...</div>
                         )}
-                        {processAnalysis.insertionGroups.length === 0 && (
+                        {processData.insertionGroups.length === 0 && (
                           <div className="text-center text-slate-400 py-4">No non-linear insertions detected (linear writing).</div>
                         )}
                       </div>
@@ -616,16 +654,16 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                      {!analysis && (
                        <button 
                         onClick={handleAIAnalysis}
-                        disabled={loading}
+                        disabled={loadingAI}
                         className="text-sm bg-purple-600 text-white px-3 py-1.5 rounded-md hover:bg-purple-700 transition-colors disabled:opacity-50"
                        >
-                         {loading ? 'Analyzing...' : 'Generate Analysis'}
+                         {loadingAI ? 'Analyzing...' : 'Generate Analysis'}
                        </button>
                      )}
                    </div>
 
                    <div className="flex-1 bg-slate-50 rounded-lg p-4 overflow-y-auto max-h-64">
-                      {loading ? (
+                      {loadingAI ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">
                           <Loader2 className="animate-spin" size={32} />
                           <p>Consulting the expert...</p>
