@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Square, Save, Download, Clock, User } from 'lucide-react';
+import { Play, Pause, Square, Clock, User, Activity } from 'lucide-react';
 import { useWritingRecorder } from '../hooks/useWritingRecorder';
 import { SessionStatus, WritingSession } from '../types';
 
@@ -17,8 +17,11 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
     resumeSession,
     stopSession,
     logEvent,
+    handleFocus,
+    handleBlur,
     studentName,
-    setStudentName
+    setStudentName,
+    eventCount
   } = useWritingRecorder();
 
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -45,69 +48,70 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Keyboard Event Handlers
+  // Keyboard Event Handlers for Navigation
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (status !== SessionStatus.RECORDING) return;
     
-    // We log navigation keys and special keys here
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backspace', 'Delete', 'Enter'].includes(e.key)) {
-       // Note: Backspace/Delete will also trigger onChange/onInput, but logging the intent here is useful for InputLog
-       // However, to avoid double counting, we might just tag the type in onInput if we can. 
-       // For Inputlog specifically, logging KEYSTROKES is the gold standard.
-       
-       // Let's purely log the key press event as a 'navigation' or 'potential-edit' marker
-       // The actual text change is captured in onChange
-       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
-         logEvent({
-           type: 'navigation',
-           position: e.currentTarget.selectionStart,
-           actionDetails: e.key
-         });
-       }
+    // Log navigation keys which don't trigger onChange
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+       logEvent({
+         type: 'navigation',
+         position: e.currentTarget.selectionStart,
+         actionDetails: e.key
+       });
     }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     if (status !== SessionStatus.RECORDING) {
-      // Allow typing if not started? Maybe not. Let's block it or just not log it.
-      // If IDLE, just update local state without logging (preview mode)
       setText(e.target.value);
       return;
     }
 
-    const newValue = e.target.value;
-    const newLength = newValue.length;
-    const oldLength = text.length;
-    const diff = newLength - oldLength;
-    const pos = e.target.selectionStart;
-
-    let type: 'insert' | 'delete' | 'paste' = 'insert';
-    let content = '';
-
-    if (diff > 0) {
-      type = 'insert';
-      // Approximation of inserted content
-      // If diff > 1, likely a paste or autocomplete
-      if (diff > 1) {
-        type = 'paste';
-        content = newValue.slice(pos - diff, pos);
-      } else {
-        content = newValue.slice(pos - 1, pos);
-      }
-    } else if (diff < 0) {
-      type = 'delete';
-      // Content deleted is hard to know exactly from just onChange without keeping full history, 
-      // but we log the event.
+    const newText = e.target.value;
+    const oldText = text;
+    
+    // Improved Diff Logic for Accurate Replay
+    let start = 0;
+    while (start < oldText.length && start < newText.length && oldText[start] === newText[start]) {
+      start++;
     }
 
-    logEvent({
-      type,
-      position: pos,
-      content,
-      actionDetails: diff === 0 ? 'replace' : undefined
-    });
+    let endOld = oldText.length - 1;
+    let endNew = newText.length - 1;
 
-    setText(newValue);
+    while (endOld >= start && endNew >= start && oldText[endOld] === newText[endNew]) {
+      endOld--;
+      endNew--;
+    }
+
+    const deletedText = oldText.slice(start, endOld + 1);
+    const insertedText = newText.slice(start, endNew + 1);
+
+    // If text was replaced (both delete and insert happened), we log them sequentially for the replayer
+    // Logic: Delete first, then Insert.
+    
+    // 1. Log Deletion if exists
+    if (deletedText.length > 0) {
+      logEvent({
+        type: 'delete',
+        position: start,
+        content: deletedText, // Store what was deleted to help debugging/analysis
+        actionDetails: 'Delete/Backspace'
+      });
+    }
+
+    // 2. Log Insertion if exists
+    if (insertedText.length > 0) {
+      logEvent({
+        type: insertedText.length > 1 ? 'paste' : 'insert',
+        position: start,
+        content: insertedText,
+        actionDetails: insertedText.length > 1 ? 'Paste/Replace' : 'Type'
+      });
+    }
+
+    setText(newText);
   };
 
   const handleFinish = () => {
@@ -123,7 +127,6 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
       return;
     }
     startSession(studentName);
-    // Focus textarea
     setTimeout(() => textareaRef.current?.focus(), 100);
   };
 
@@ -172,12 +175,26 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
             {studentName}
           </div>
           <div className="h-4 w-px bg-slate-300"></div>
-          <div className="flex items-center gap-2 text-indigo-600 font-mono text-lg bg-indigo-50 px-3 py-1 rounded-md">
-            <Clock size={16} />
-            {formatTime(elapsedTime)}
+          
+          {/* Recording Status */}
+          <div className={`flex items-center gap-2 font-mono text-sm px-3 py-1 rounded-full border transition-all ${
+            status === SessionStatus.RECORDING 
+              ? 'bg-red-50 border-red-100 text-red-600' 
+              : 'bg-amber-50 border-amber-100 text-amber-600'
+          }`}>
+             {status === SessionStatus.RECORDING && (
+               <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+               </span>
+             )}
+             {status === SessionStatus.RECORDING ? 'REC' : 'PAUSED'}
+             <span className="ml-1 font-semibold">{formatTime(elapsedTime)}</span>
           </div>
-          <div className="text-sm text-slate-400 font-medium">
-             {text.trim().split(/\s+/).filter(w => w.length > 0).length} words
+          
+          <div className="text-xs text-slate-400 flex items-center gap-1">
+             <Activity size={12} />
+             {eventCount} events
           </div>
         </div>
 
@@ -215,6 +232,8 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
              value={text}
              onChange={handleChange}
              onKeyDown={handleKeyDown}
+             onFocus={handleFocus}
+             onBlur={handleBlur}
              placeholder="Start writing here..."
              className="w-full h-full min-h-[60vh] resize-none outline-none text-lg leading-relaxed font-serif-write text-slate-800 placeholder:text-slate-300"
              spellCheck={false}
