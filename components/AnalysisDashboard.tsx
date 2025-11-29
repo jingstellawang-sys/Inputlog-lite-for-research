@@ -104,11 +104,6 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
       const firstEvent = insertionBuffer[0];
       const combinedContent = insertionBuffer.map(e => e.content).join('');
       
-      // Determine Level based on context captured in the object? 
-      // Simplified: We check if the content contains newlines or if it's large.
-      // A better heuristic for "Paragraph Level" vs "Sentence Level" for *non-linear* moves:
-      // If it happens at a newline boundary or includes newlines.
-      
       let level: 'Sentence' | 'Paragraph' = 'Sentence';
       if (combinedContent.includes('\n') || combinedContent.length > 50) {
           level = 'Paragraph';
@@ -152,16 +147,13 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
         flushDeletions(); 
 
         // Check for Replacement Logic
-        // If we just finished a deletion, and this insert is at the same spot, it's a replacement.
-        const isReplacementStart = lastDeletionGroup && event.position === lastDeletionGroup.position && (event.timestamp - (lastDeletionGroup.time + lastDeletionGroup.count * 100) < 5000); // loose time check
+        const isReplacementStart = lastDeletionGroup && event.position === lastDeletionGroup.position && (event.timestamp - (lastDeletionGroup.time + lastDeletionGroup.count * 100) < 5000); 
         
         if (isReplacementStart || (isTrackingReplacement && isSequential(replacementBuffer, event))) {
            isTrackingReplacement = true;
            replacementBuffer.push(event);
-           // We do NOT add to insertionBuffer if it's a replacement (it's part of the edit)
         } 
         else {
-           // Normal Insertion
            flushReplacement(); 
 
            const isNonLinear = event.position < currentText.length;
@@ -186,7 +178,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
       } 
       else if (event.type === 'delete') {
         flushInsertions();
-        flushReplacement(); // Deletion breaks any replacement sequence
+        flushReplacement(); 
 
         if (isSequential(deletionBuffer, event)) {
           deletionBuffer.push(event);
@@ -213,18 +205,8 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
     flushInsertions();
     flushReplacement();
 
-    // Post-process Insertion Groups for Level categorization
-    // (Since we can't easily access 'currentText' snapshot inside the flush helper without storing state)
-    // We'll rely on the content heuristic for now, but we can improve.
-    // Let's refine the 'level' for insertions: 
-    // If the insertion was detected as non-linear, we want to know if it was Paragraph or Sentence level.
-    // A simple approximation is checking if it *starts* with a capital letter or contains a period? 
-    // Or if it contains newlines.
-    
     const refinedInsertions = insertionGroups.map(g => {
         let level: 'Sentence' | 'Paragraph' = 'Sentence';
-        // Heuristic: If it has newlines or is very long, likely paragraph level structure.
-        // If it starts with a newline, definitely paragraph level.
         if (g.content.includes('\n') || g.content.length > 80) {
             level = 'Paragraph';
         }
@@ -257,6 +239,8 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
 
     for (let i = 0; i <= bucketCount; i++) {
       const timeThreshold = i * bucketSize;
+      // Note: For 40 minute sessions, this filter can be heavy if running 40 times on 20k events.
+      // But for <100k events it's usually acceptable on modern JS engines.
       const eventsUpToNow = session.events.filter(e => e.relativeTime <= timeThreshold);
       const insertCount = eventsUpToNow.filter(e => e.type === 'insert' || e.type === 'paste').length;
       const deleteCount = eventsUpToNow.filter(e => e.type === 'delete').length;
@@ -426,7 +410,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                          </tr>
                        </thead>
                        <tbody className="divide-y divide-slate-100">
-                         {processAnalysis.pauses.map((pause) => (
+                         {processAnalysis.pauses.slice(0, 100).map((pause) => (
                            <tr key={pause.id} className="group hover:bg-slate-50">
                              <td className="py-3 text-slate-500 font-mono text-xs">{formatTime(pause.startTime)}</td>
                              <td className="py-3 font-semibold text-slate-700">{(pause.duration / 1000).toFixed(1)}s</td>
@@ -444,6 +428,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                              </td>
                            </tr>
                          ))}
+                         {processAnalysis.pauses.length > 100 && (
+                            <tr><td colSpan={4} className="py-2 text-center text-slate-400 italic">Showing first 100 of {processAnalysis.pauses.length} pauses...</td></tr>
+                         )}
                          {processAnalysis.pauses.length === 0 && (
                             <tr><td colSpan={4} className="py-4 text-center text-slate-400">No significant pauses detected.</td></tr>
                          )}
@@ -474,7 +461,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                  {showDeletionList && (
                    <div className="px-6 pb-6 max-h-80 overflow-y-auto custom-scrollbar">
                      <div className="space-y-3">
-                       {processAnalysis.deletionGroups.map((del) => (
+                       {processAnalysis.deletionGroups.slice(0, 100).map((del) => (
                          <div key={del.id} className="p-3 rounded-lg border border-slate-100 hover:border-slate-200 transition-colors">
                            <div className="flex items-start justify-between mb-2">
                               <div className="flex items-center gap-3">
@@ -514,6 +501,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                            </div>
                          </div>
                        ))}
+                       {processAnalysis.deletionGroups.length > 100 && (
+                          <div className="text-center text-slate-400 py-2 italic">Showing first 100 of {processAnalysis.deletionGroups.length} deletions...</div>
+                       )}
                        {processAnalysis.deletionGroups.length === 0 && (
                          <div className="text-center text-slate-400 py-4">No deletions recorded.</div>
                        )}
@@ -543,7 +533,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                  {showInsertionList && (
                    <div className="px-6 pb-6 max-h-60 overflow-y-auto custom-scrollbar">
                       <div className="space-y-2">
-                        {processAnalysis.insertionGroups.map((ins) => (
+                        {processAnalysis.insertionGroups.slice(0, 100).map((ins) => (
                           <div key={ins.id} className="flex items-center justify-between p-3 bg-slate-50 rounded border border-slate-100">
                             <div className="flex items-center gap-4">
                               <span className="text-xs font-mono text-slate-500 w-12">{formatTime(ins.time)}</span>
@@ -566,6 +556,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ session, o
                             </span>
                           </div>
                         ))}
+                        {processAnalysis.insertionGroups.length > 100 && (
+                          <div className="text-center text-slate-400 py-2 italic">Showing first 100 of {processAnalysis.insertionGroups.length} insertions...</div>
+                        )}
                         {processAnalysis.insertionGroups.length === 0 && (
                           <div className="text-center text-slate-400 py-4">No non-linear insertions detected (linear writing).</div>
                         )}

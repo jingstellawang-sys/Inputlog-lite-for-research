@@ -1,17 +1,83 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { LogEvent, SessionStatus, WritingSession } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+
+const AUTOSAVE_KEY = 'inputlog_autosave_v1';
 
 export const useWritingRecorder = () => {
   const [status, setStatus] = useState<SessionStatus>(SessionStatus.IDLE);
   const [text, setText] = useState('');
   const [studentName, setStudentName] = useState('');
   
-  // Refs for mutable data that shouldn't trigger re-renders on every keystroke
+  // Refs for mutable data
   const eventsRef = useRef<LogEvent[]>([]);
   const startTimeRef = useRef<number>(0);
   const lastEventTimeRef = useRef<number>(0);
   const sessionRef = useRef<WritingSession | null>(null);
+
+  // --- Auto-Save Logic ---
+  const saveToStorage = useCallback(() => {
+    if (status === SessionStatus.RECORDING || status === SessionStatus.PAUSED) {
+      const currentData = {
+        studentName,
+        text,
+        status,
+        startTime: startTimeRef.current,
+        events: eventsRef.current,
+        lastEventTime: lastEventTimeRef.current,
+        timestamp: Date.now()
+      };
+      try {
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(currentData));
+      } catch (e) {
+        console.warn("Autosave failed (quota exceeded?)", e);
+      }
+    }
+  }, [status, text, studentName]);
+
+  // Auto-save interval
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (status === SessionStatus.RECORDING) {
+      interval = setInterval(saveToStorage, 2000); // Save every 2 seconds
+    }
+    return () => clearInterval(interval);
+  }, [status, saveToStorage]);
+
+  // Restore logic
+  const checkSavedSession = () => {
+    try {
+      const saved = localStorage.getItem(AUTOSAVE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Only restore if it's recent (e.g., within 24 hours) to avoid stale data confusion
+        if (Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      return null;
+    }
+    return null;
+  };
+
+  const restoreSession = () => {
+    const saved = checkSavedSession();
+    if (saved) {
+      setStudentName(saved.studentName);
+      setText(saved.text);
+      eventsRef.current = saved.events;
+      startTimeRef.current = saved.startTime;
+      lastEventTimeRef.current = saved.lastEventTime;
+      setStatus(SessionStatus.PAUSED); // Restore in paused state
+      logEvent({ type: 'insert', position: 0, content: '', actionDetails: 'Session Restored' });
+    }
+  };
+
+  const clearSavedSession = () => {
+    localStorage.removeItem(AUTOSAVE_KEY);
+  };
+  // -----------------------
 
   const startSession = (name: string) => {
     setStudentName(name);
@@ -21,7 +87,6 @@ export const useWritingRecorder = () => {
     lastEventTimeRef.current = startTimeRef.current;
     setStatus(SessionStatus.RECORDING);
     
-    // Initial focus event
     logEvent({
       type: 'focus',
       position: 0,
@@ -32,6 +97,7 @@ export const useWritingRecorder = () => {
   const pauseSession = () => {
     if (status === SessionStatus.RECORDING) {
       setStatus(SessionStatus.PAUSED);
+      saveToStorage();
     }
   };
 
@@ -60,15 +126,18 @@ export const useWritingRecorder = () => {
     };
 
     sessionRef.current = session;
+    clearSavedSession(); // Clean up storage on successful finish
     return session;
   };
 
   const logEvent = (partialEvent: Omit<LogEvent, 'id' | 'timestamp' | 'relativeTime' | 'pauseBefore'>) => {
+    // Modified: Allow logging during PAUSED only for specific system events (like restore)
     if (status !== SessionStatus.RECORDING && status !== SessionStatus.PAUSED) return;
     
-    // Allow logging focus events even if paused (sometimes) but generally stick to recording status
-    // For this implementation, we mostly log during RECORDING.
-    if (status === SessionStatus.PAUSED && partialEvent.type !== 'focus' && partialEvent.type !== 'blur') return;
+    if (status === SessionStatus.PAUSED && 
+        partialEvent.type !== 'focus' && 
+        partialEvent.type !== 'blur' && 
+        partialEvent.actionDetails !== 'Session Restored') return;
 
     const now = Date.now();
     const pauseBefore = now - lastEventTimeRef.current;
@@ -95,7 +164,6 @@ export const useWritingRecorder = () => {
      setText(newText);
   };
   
-  // Track window focus/blur
   const handleFocus = () => {
     if (status === SessionStatus.RECORDING) {
       logEvent({ type: 'focus', position: -1, content: 'Window Focused' });
@@ -122,6 +190,8 @@ export const useWritingRecorder = () => {
     handleTextChange,
     handleFocus,
     handleBlur,
-    eventCount: eventsRef.current.length
+    eventCount: eventsRef.current.length,
+    checkSavedSession,
+    restoreSession
   };
 };

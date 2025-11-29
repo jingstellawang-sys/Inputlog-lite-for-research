@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Square, Clock, User, Activity, Upload } from 'lucide-react';
+import { Play, Pause, Square, Clock, User, Activity, Upload, RefreshCw } from 'lucide-react';
 import { useWritingRecorder } from '../hooks/useWritingRecorder';
 import { SessionStatus, WritingSession } from '../types';
 
@@ -21,13 +21,22 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
     handleBlur,
     studentName,
     setStudentName,
-    eventCount
+    eventCount,
+    checkSavedSession,
+    restoreSession
   } = useWritingRecorder();
 
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [hasSavedSession, setHasSavedSession] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check for saved session on mount
+  useEffect(() => {
+    const saved = checkSavedSession();
+    if (saved) setHasSavedSession(true);
+  }, []); // eslint-disable-line
 
   // Timer logic
   useEffect(() => {
@@ -131,6 +140,12 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
     setTimeout(() => textareaRef.current?.focus(), 100);
   };
 
+  const handleRestore = () => {
+    restoreSession();
+    setHasSavedSession(false);
+    setTimeout(() => textareaRef.current?.focus(), 100);
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -184,6 +199,16 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
               <Play size={20} />
               Start Writing
             </button>
+
+            {hasSavedSession && (
+              <button
+                onClick={handleRestore}
+                className="w-full bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                <RefreshCw size={20} />
+                Restore Unsaved Session
+              </button>
+            )}
           </div>
 
           <div className="mt-8 pt-6 border-t border-slate-100">
