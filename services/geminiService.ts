@@ -36,8 +36,11 @@ const processStats = (session: WritingSession) => {
 };
 
 export const analyzeWritingSession = async (session: WritingSession): Promise<string> => {
-  if (!process.env.API_KEY) {
-    return "Gemini API Key is missing. Please configure the environment.";
+  // Safety check: ensure process.env.API_KEY is available and is a string
+  const apiKey = typeof process !== 'undefined' && process.env ? process.env.API_KEY : null;
+
+  if (!apiKey) {
+    return "⚠️ API Key missing. Please add 'API_KEY' to your Vercel Environment Variables to enable AI feedback.";
   }
 
   const stats = processStats(session);
@@ -65,7 +68,7 @@ export const analyzeWritingSession = async (session: WritingSession): Promise<st
   `;
 
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: apiKey });
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
@@ -74,6 +77,6 @@ export const analyzeWritingSession = async (session: WritingSession): Promise<st
     return response.text || "Could not generate analysis.";
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
-    return "Error analyzing session. Please try again later.";
+    return "Error analyzing session. Please check your API key and quota.";
   }
 };
