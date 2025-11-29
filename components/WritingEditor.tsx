@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Square, Clock, User, Activity } from 'lucide-react';
+import { Play, Pause, Square, Clock, User, Activity, Upload } from 'lucide-react';
 import { useWritingRecorder } from '../hooks/useWritingRecorder';
 import { SessionStatus, WritingSession } from '../types';
 
@@ -27,6 +27,7 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
   const [elapsedTime, setElapsedTime] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Timer logic
   useEffect(() => {
@@ -130,6 +131,30 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
     setTimeout(() => textareaRef.current?.focus(), 100);
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        // Basic validation to ensure it's a valid session file
+        if (json.id && json.events && Array.isArray(json.events) && json.finalText !== undefined) {
+          onSessionComplete(json as WritingSession);
+        } else {
+          alert("Invalid log file format. Please upload a valid Inputlog JSON export.");
+        }
+      } catch (err) {
+        console.error(err);
+        alert("Error reading file. The file might be corrupted.");
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   if (status === SessionStatus.IDLE) {
     return (
       <div className="h-full flex items-center justify-center p-6">
@@ -158,6 +183,24 @@ export const WritingEditor: React.FC<WritingEditorProps> = ({ onSessionComplete 
             >
               <Play size={20} />
               Start Writing
+            </button>
+          </div>
+
+          <div className="mt-8 pt-6 border-t border-slate-100">
+            <p className="text-xs text-slate-400 mb-3 uppercase font-bold tracking-wider">For Teachers</p>
+            <input 
+              type="file" 
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              className="hidden" 
+              accept=".json"
+            />
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
+            >
+              <Upload size={16} />
+              Import Session Log
             </button>
           </div>
         </div>
